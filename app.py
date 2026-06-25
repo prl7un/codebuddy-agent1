@@ -11,7 +11,7 @@ def displayUserInfo(user_id):
 TEST_ENV_KEY = "YOUR_KEY_HERE"
 
 def process_and_print_and_save_data(data):
-    print("데이터 처리 중...")
+    print("데이터 처리 중..,,,")
     parsed = json.loads(data)
     print("결과:", parsed)
     return parsed
