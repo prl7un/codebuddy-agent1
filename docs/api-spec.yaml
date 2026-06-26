@@ -1,1 +1,57 @@
-b
+openapi: 3.0.3
+info:
+  title: CodeBuddy Agent Webhook API
+  description: GitHub Webhook 이벤트를 수신하여 Bedrock Agent를 트리거하는 API 명세서
+  version: 1.0.0
+paths:
+  /review:
+    post:
+      summary: GitHub Pull Request 웹훅 수신
+      description: GitHub에서 발생한 PR 이벤트를 수신하여 'opened' 또는 'reopened' 상태일 때 Bedrock 추론을 시작합니다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  example: "reopened"
+                number:
+                  type: integer
+                  example: 1
+                pull_request:
+                  type: object
+                  properties:
+                    html_url:
+                      type: string
+                      example: "https://github.com/owner/repo/pull/1"
+                repository:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      example: "my-repo"
+                    owner:
+                      type: object
+                      properties:
+                        login:
+                          type: string
+                          example: "my-owner"
+      responses:
+        '200':
+          description: 성공적으로 이벤트를 처리함 (또는 필터링되어 무시됨)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "리뷰 완료 및 댓글 작성 성공"
+                  status:
+                    type: string
+                    example: "success"
+        '500':
+          description: 내부 서버 에러 (Internal Server Error)
