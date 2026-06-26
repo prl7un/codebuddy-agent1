@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CodeBuddy Agent Serverless Deployment (API Gateway + Lambda)'
+
+Parameters:
+  AgentId:
+    Type: String
+    Description: 'Bedrock Agent ID'
+  AliasId:
+    Type: String
+    Description: 'Bedrock Agent Alias ID'
+  GitHubToken:
+    Type: String
+    Description: 'GitHub Personal Access Token'
+    NoEcho: true
+  SlackWebhookUrl:
+    Type: String
+    Description: 'Slack Webhook URL for notifications'
+
+Resources:
+  # 1. Lambda ?? ?? (IAM Role)
+  OrchestratorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CodeBuddyOrchestratorRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockAndLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeAgent
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # 2. Orchestrator Lambda ??
+  OrchestratorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: codebuddy-orchestrator
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt OrchestratorLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          AGENT_ID: !Ref AgentId
+          ALIAS_ID: !Ref AliasId
+          GITHUB_TOKEN: !Ref GitHubToken
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+      Code:
+        ZipFile: |
+          import json
+          import os
+
+          def handler(event, context):
+              print("Received event:", json.dumps(event))
+              try:
+                  body = json.loads(event.get('body', '{}'))
+                  # GitHub Webhook? pull_request.html_url ?? ??? ?????.
+                  pr_url = body.get('pull_request', {}).get('html_url', body.get('pr_url'))
+                  
+                  if not pr_url:
+                      return {"statusCode": 200, "body": json.dumps({"message": "Not a PR event or Missing pr_url"})}
+                      
+                  # ?? ??? Bedrock Agent ?? (bedrock-agent-runtime) ?? ??
+                  
+                  return {
+                      "statusCode": 200,
+                      "body": json.dumps({"message": "?? ???", "status": "processing", "pr_url": pr_url})
+                  }
+              except Exception as e:
+                  return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+  # 3. API Gateway ??
+  CodeBuddyApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: CodeBuddyAPI
+      Description: CodeBuddy Agent Webhook API
+
+  # 4. API Gateway ??? (/review)
+  ReviewResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CodeBuddyApiGateway
+      ParentId: !GetAtt CodeBuddyApiGateway.RootResourceId
+      PathPart: review
+
+  # 5. API Gateway ??? (POST)
+  ReviewMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CodeBuddyApiGateway
+      ResourceId: !Ref ReviewResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !GetAtt OrchestratorLambda.Arn
+
+  # 6. API Gateway ?? (Stage ??) - ?? ???!
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: ReviewMethod
+    Properties:
+      RestApiId: !Ref CodeBuddyApiGateway
+      StageName: prod
+
+  # 7. API Gateway? Lambda? ??? ? ?? ??
+  LambdaApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt OrchestratorLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CodeBuddyApiGateway}/*/POST/review"
+
+Outputs:
+  ApiGatewayInvokeUrl:
+    Description: "Webhook URL to configure in GitHub"
+    Value: !Sub "https://${CodeBuddyApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/review"
