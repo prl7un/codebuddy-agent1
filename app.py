@@ -15,3 +15,4 @@ def process_and_print_and_save_data(data):
     parsed = json.loads(data)
     print("결과:", parsed)
     return parsed
+# AWS Bedrock 기반 통합 프로젝트
